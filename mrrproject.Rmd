@@ -1,0 +1,242 @@
+---
+title: 'MRR Project Group 37: Sao Paulo traffic - Variable selection'
+author: "Frederick Deny, Jean-Baptiste Skutnik, Lounès Moumou"
+date: "23/11/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+library(MASS)
+library(corrplot)
+library(glmnet)
+library(magrittr)
+library(caret)
+library(gglasso)
+```
+
+
+
+
+```{r echo=FALSE}
+setwd("D:/Documents/TP ENSIIE/")
+df <- read.table(file = "MRR/MRRProjectDataset/saopaulotrafficdataset.csv",header=TRUE, sep=';' , dec=",")
+
+```
+
+
+# Baseline
+
+ For the baseline, we chose to use a stepwise variable selection, as it is a basic and general way of selecting variables. We used the stepAIC() method and got these results:
+
+
+
+```{r, include=FALSE}
+df <- df[sample(nrow(df)),]
+training.samples <- df$Slowness.in.traffic %>% createDataPartition(p = 0.8, list = FALSE)
+
+df_train <- df[training.samples,]
+df_test <- df[-training.samples,]
+
+x <- model.matrix(Slowness.in.traffic~.,df_train)[,-1]
+y <- df_train$Slowness.in.traffic
+x.test <- model.matrix(Slowness.in.traffic~., df_test)[,-1]
+y.test <- df_test$Slowness.in.traffic
+set.seed(1000)
+```
+
+```{r, include=FALSE}
+reg <- lm(Slowness.in.traffic~.,data=df_train)
+
+
+stepboth=stepAIC(reg,direction="both")
+summary(stepboth)
+
+
+prediction_simple <- predict(reg,df_test)
+prediction_step <- predict(stepboth,df_test)
+```
+
+```{r, echo=FALSE}
+data.frame(
+  RMSE = RMSE(prediction_step, df_test$Slowness.in.traffic),
+  Rsquare = R2(prediction_step, df_test$Slowness.in.traffic)
+)
+```
+
+# Theoritical study
+
+It is necessary to build upon our baseline to find a better method to have more accurate predictions.
+
+
+We first discarded the group-lasso method, as it requires to build groups of variables, to compute which are the most relevant. In our case, all our variables are similar (all are number of occurrences of events with the same radius of effect and range of values) so building groups would be artificial and would lack theoritical meaning.
+
+Otherwise, we believed the elastic-net to be one of our most versatile tools and chose to use it, but we mainly believed in the KNN method. Indeed, with our peculiar dataset with small ranges of values, which all supposedly induce a higher target value, the use of distance felt especially adequate.
+
+Concerning the cross-validation method, we used the K-fold but also the LOOCV, due to the fact that some of our variables have rare occurences: in a K-fold method, these rare occurences might only be met in the testing set.
+
+# Practical study
+
+## LOOCV Method
+
+```{r, echo=FALSE, include=FALSE}
+LOOCVelanet<- function(n_tests, results_elanet){
+
+ for(i in 1:n_tests){
+   df <- df[sample(nrow(df)),]
+   training.samples <- df$Slowness.in.traffic %>% createDataPartition(p = 0.8, list = FALSE)
+
+   df_train <- df[training.samples,]
+   df_test <- df[-training.samples,]
+
+   x <- model.matrix(Slowness.in.traffic~.,df_train)[,-1]
+   y <- df_train$Slowness.in.traffic
+   x.test <- model.matrix(Slowness.in.traffic~., df_test)[,-1]
+   y.test <- df_test$Slowness.in.traffic
+   
+  train_control <- trainControl(method = "LOOCV",
+                              number = 10,
+                              search = "random")
+
+
+  model_elanet_LOOCV <- train(Slowness.in.traffic ~ .,
+                           data = df_train,
+                           method = "glmnet",
+                           preProcess = c("center", "scale"),
+                           tuneLength = 25,
+                           trControl = train_control)
+
+
+  prediction_elanet_LOOCV <- predict(model_elanet_LOOCV,x.test) 
+
+  results_elanet <-  cbind(results_elanet,R2(prediction_elanet_LOOCV, y.test))
+  }
+
+ return(results_elanet)
+}
+
+LOOCVknn<- function(n_tests, results_knn){
+  
+ for(i in 1:n_tests){
+   
+      df <- df[sample(nrow(df)),]
+   training.samples <- df$Slowness.in.traffic %>% createDataPartition(p = 0.8, list = FALSE)
+
+   df_train <- df[training.samples,]
+   df_test <- df[-training.samples,]
+
+   x <- model.matrix(Slowness.in.traffic~.,df_train)[,-1]
+   y <- df_train$Slowness.in.traffic
+   x.test <- model.matrix(Slowness.in.traffic~., df_test)[,-1]
+   y.test <- df_test$Slowness.in.traffic
+   
+   
+  train_control <- trainControl(method = "LOOCV",
+                              number = 10,
+                              search = "random")
+
+  model_knn_LOOCV <- train(Slowness.in.traffic ~ .,
+                           data = df_train,
+                           method = "knn",
+                           preProcess = c("center", "scale"),
+                           tuneLength = 25,
+                           trControl = train_control)
+
+  prediction_knn_LOOCV <- predict(model_knn_LOOCV,x.test)
+
+  results_knn <-  cbind(results_knn,R2(prediction_knn_LOOCV, y.test))
+  }
+
+ return(results_knn)
+}
+
+knn <- vector()
+elanet <- vector()
+
+knn<-LOOCVknn(10,knn)
+elanet<-LOOCVelanet(10,elanet)
+```
+
+
+
+
+```{r, echo=FALSE, fig.height=3, fig.width=12}
+par(mfrow=c(1,2))
+hist(elanet, xlab="Elastic Net Rsquared", main="Elastic Net Rsquared, 10 different dataset shuffle, LOOCV")
+
+hist(knn, xlab="KNN Rsquared", main="KNN Rsquared, 10 different dataset shuffle, LOOCV")
+
+```
+
+
+
+
+We see that theses results aren't very satisfactory, they are sometime less convincing that our baseline, and especially spread. Overall, the result isn't robust at all.
+
+## K-fold Method
+
+```{r, echo=FALSE, include=FALSE}
+train_control <- trainControl(method = "repeatedcv",
+                              number = 30,
+                              search = "random")
+
+
+model_elanet <- train(Slowness.in.traffic ~ .,
+                           data = df_train,
+                           method = "glmnet",
+                           preProcess = c("center", "scale"),
+                           tuneLength = 25,
+                           trControl = train_control)
+
+model_knn <- train(Slowness.in.traffic ~ .,
+                           data = df_train,
+                           method = "knn",
+                           preProcess = c("center", "scale"),
+                           tuneLength = 25,
+                           trControl = train_control)
+
+test <-model_elanet$finalModel
+coef(test,s=model_elanet$bestTune$lambda)
+```
+
+
+
+```{r, echo=FALSE, fig.height=2}
+results <- resamples(list(ElasticNet=model_elanet,KNN=model_knn),metrics="RMSE")
+#summary(results)
+
+bwplot(results, main="KNN and Elastic Net with K-fold CV",aspect="fill")
+```
+
+
+
+
+```{r, echo=FALSE, fig.align="center", fig.height=2.5, fig.width= 4}
+
+hist(results$values[,4],main = "Elastic Net Rsquared values",xlab="Rsquared value")
+```
+
+
+Rsquared mean value:
+
+```{r, echo=FALSE}
+
+mean(results$values[,4])
+```
+
+
+Here we see that the elastic-net results are better that the ones provided by the KNN method, with a Rsquared around 0.65 and a RMSE slightly under 3.
+
+We also see that the Rsquared is squashed by very low Rsquared-values from seemingly badly made training/testing/validating set.
+
+
+
+# Conclusion
+
+ The Elastic Net and K-fold crossvalidation seem to provide robust results. They notably insure that the data and the target value are indeed related, and that the built model is capable of predict the tendancies of the traffic with the observation provided.
+Otherwise, it seems like some data set subsetting provide unsatisfactory results, which might be corrected via the exclusion of observation points or the acquisition of new data.
+
+
+Alltogether, we assume that the best modelisation choice is to use the Elastic-Net algorithm as it shows the best results, and seems to be the most robust.

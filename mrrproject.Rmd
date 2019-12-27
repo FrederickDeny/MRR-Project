@@ -21,9 +21,7 @@ library(gglasso)
 
 
 ```{r echo=FALSE}
-setwd("D:/Documents/TP ENSIIE/")
-df <- read.table(file = "MRR/MRRProjectDataset/saopaulotrafficdataset.csv",header=TRUE, sep=';' , dec=",")
-
+df <- read.table(file = "saopaulotrafficdataset.csv",header=TRUE, sep=';' , dec=",")
 ```
 
 
